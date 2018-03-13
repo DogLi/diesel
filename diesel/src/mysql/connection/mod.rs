@@ -39,8 +39,9 @@ impl Connection for MysqlConnection {
     fn establish(database_url: &str) -> ConnectionResult<Self> {
         use result::ConnectionError::CouldntSetupConfiguration;
 
-        let raw_connection = RawConnection::new();
         let connection_options = try!(ConnectionOptions::parse(database_url));
+        let timeout: u32 = connection_options.timeout().unwrap_or(10);
+        let raw_connection = RawConnection::new(timeout);
         try!(raw_connection.connect(&connection_options));
         let conn = MysqlConnection {
             raw_connection: raw_connection,
