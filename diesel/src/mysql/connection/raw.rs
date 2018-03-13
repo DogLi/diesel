@@ -216,6 +216,14 @@ impl RawConnection {
         self.did_an_error_occur()?;
         Ok(more_results)
     }
+
+    pub fn is_valid(&self) -> bool {
+        let ping_result = unsafe { ffi::mysql_ping(self.0)};
+        match ping_result {
+            0 => true,
+            _ => false,
+        }
+    }
 }
 
 impl Drop for RawConnection {

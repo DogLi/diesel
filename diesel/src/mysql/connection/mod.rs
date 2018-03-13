@@ -110,6 +110,9 @@ impl Connection for MysqlConnection {
     fn transaction_manager(&self) -> &Self::TransactionManager {
         &self.transaction_manager
     }
+
+    #[doc(hidden)]
+    fn is_valid(&self) -> bool { self.raw_connection.is_valid()}
 }
 
 impl MysqlConnection {
