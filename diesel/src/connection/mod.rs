@@ -186,7 +186,4 @@ pub trait Connection: SimpleConnection + Sized + Send {
 
     #[doc(hidden)]
     fn transaction_manager(&self) -> &Self::TransactionManager;
-
-    #[doc(hidden)]
-    fn is_valid(&self) -> bool;
 }

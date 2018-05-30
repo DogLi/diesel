@@ -47,7 +47,7 @@ impl ConnectionOptions {
         };
 
         let query = url.query_pairs();
-        let timeout = query.fileter(|q| q.0 == "timeout").next().and_then(|q| q.1.parse::<u32>().ok());
+        let timeout = query.filter(|q| q.0 == "timeout").next().and_then(|q| q.1.parse::<u32>().ok());
 
         Ok(ConnectionOptions {
             host: host,

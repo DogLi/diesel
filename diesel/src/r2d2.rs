@@ -150,6 +150,7 @@ where
     fn transaction_manager(&self) -> &Self::TransactionManager {
         (&**self).transaction_manager()
     }
+
 }
 
 #[cfg(test)]

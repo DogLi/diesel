@@ -40,7 +40,7 @@ impl RawConnection {
         //explicitly turn off reconnect
         let reconnect = &0i32 as *const libc::c_int as *const libc::c_void;
         let reconnect_result = unsafe { ffi::mysql_options(
-            result.0,
+            result.0.as_ptr(),
             ffi::mysql_option::MYSQL_OPT_RECONNECT,
             reconnect,
         ) };
@@ -50,7 +50,7 @@ impl RawConnection {
 
         let timeout = &timeout as *const libc::c_uint as *const libc::c_void;
         let connect_timeout_result = unsafe { ffi::mysql_options(
-            result.0,
+            result.0.as_ptr(),
             ffi::mysql_option::MYSQL_OPT_CONNECT_TIMEOUT,
             timeout,
         ) };
@@ -59,7 +59,7 @@ impl RawConnection {
                    happen.");
 
         let read_timeout_result = unsafe { ffi::mysql_options(
-            result.0,
+            result.0.as_ptr(),
             ffi::mysql_option::MYSQL_OPT_READ_TIMEOUT,
             timeout,
         ) };
@@ -68,7 +68,7 @@ impl RawConnection {
             happen.");
 
         let write_timeout_result = unsafe { ffi::mysql_options(
-            result.0,
+            result.0.as_ptr(),
             ffi::mysql_option::MYSQL_OPT_WRITE_TIMEOUT,
             timeout,
         ) };
@@ -217,13 +217,6 @@ impl RawConnection {
         Ok(more_results)
     }
 
-    pub fn is_valid(&self) -> bool {
-        let ping_result = unsafe { ffi::mysql_ping(self.0)};
-        match ping_result {
-            0 => true,
-            _ => false,
-        }
-    }
 }
 
 impl Drop for RawConnection {
