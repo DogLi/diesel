@@ -4,9 +4,117 @@ All user visible changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/), as described
 for Rust libraries in [RFC #1105](https://github.com/rust-lang/rfcs/blob/master/text/1105-api-evolution.md)
 
-## Unreleased
+## [1.3.1] - 2018-05-23
+
+### Fixed
+
+* Fixed an issue with Diesel CLI's use of temp files that caused errors on
+  Windows.
+
+## [1.3.0] - 2018-05-22
 
 ### Added
+
+* Diesel CLI now supports a configuration file. See
+  diesel.rs/guides/configuring-diesel-cli for details.
+
+* `sql_function!` now supports generic functions. See [the documentation for
+  `sql_function!`][sql-function-1-3-0] for more details.
+
+* `sql_function!` now supports aggregate functions like `sum` and `max`, by
+  annotating them with `#[aggregate]`. This skips the implementation of
+  `NonAggregate` for your function. See [the documentation for
+  `sql_function!`][sql-function-1-3-0] for more details.
+
+* `sql_function!` now supports renaming the function by annotating it with
+  `#[sql_name = "SOME_FUNCTION"]`. This can be used to support functions with
+  multiple signatures such as coalesce, by defining multiple rust functions
+  (with different names) that have the same `#[sql_name]`.
+
+* Added `sqlite-bundled` feature to `diesel_cli` to make installing on
+  some platforms easier.
+
+* Custom SQL functions can now be used with SQLite. See [the
+  docs][sql-function-sqlite-1-3-0] for details.
+
+* All functions and operators provided by Diesel can now be used with numeric
+  operators if the SQL type supports it.
+
+* `PgInterval` can now be used with `-`, `*`, and `/`.
+
+* `Vec<T>` is now `Insertable`. It is no longer required to always place an `&`
+  in front of `.values`.
+
+* Added support for PG tuples. See [`sql_types::Record`][record-1-3-0] for details.
+
+[record-1-3-0]: http://docs.diesel.rs/diesel/pg/types/sql_types/struct.Record.html
+
+* Added support for a wider range of locking clauses, including `FOR SHARE`,
+  `SKIP LOCKED`, `NO WAIT`, and more. See [`QueryDsl`][locking-clause-1-3-0] for details.
+
+[locking-clause-1-3-0]: http://docs.diesel.rs/diesel/query_dsl/trait.QueryDsl.html#method.for_update
+
+### Changed
+
+* `sql_function!` has been redesigned. The syntax is now `sql_function!(fn
+  lower(x: Text) -> Text);`. The output of the new syntax is slightly different
+  than what was generated in the past. See [the documentation for
+  `sql_function!`][sql-function-1-3-0] for more details.
+
+[sql-function-1-3-0]: http://docs.diesel.rs/diesel/macro.sql_function.html
+
+* Diesel's minimum supported Rust version is 1.24.0. This was already true, but
+  it is now tested and enforced. Any future changes to our minimum supported
+  version will be listed in this change log.
+
+### Fixed
+
+* `diesel print-schema` and `infer_schema!` now properly handle unsigned types
+  in MySQL
+
+### Deprecated
+
+* `diesel_infer_schema` has been deprecated. `diesel print-schema` is now the
+  only way to generate database schema. Diesel CLI can be configured to
+  automatically regenerate your schema file when migrations are run. See
+  diesel.rs/guides/configuring-diesel-cli for details.
+
+* Uses of `sql_function!` in the form `sql_function!(foo, foo_t, (x: Integer))`
+  have been deprecated in favor of a new design (listed above). Note: Due to [a
+  bug in Rust](https://github.com/rust-lang/rust/issues/49912), you may not see
+  a deprecation warning from usage of the old form. As always, if you're
+  concerned about relying on deprecated code, we recommend attempting to build
+  your app with `default-features` turned off (specifically excluding the
+  `with-deprecated` feature).
+
+* The `--whitelist` and `--blacklist` options to `diesel print-schema` have been
+  deprecated and renamed `--only-tables` and `--exclude-tables`.
+
+## [1.2.2] - 2018-04-12
+
+### Changed
+
+* Warnings are now allowed inside the crate. The way we had attempted to
+  deprecate old feature names caused builds to break. We are still not happy
+  with how this deprecation gets communicated, and will revisit it in the
+  future.
+
+## [1.2.1] - 2018-04-11
+
+### Changed
+
+* Renamed `x32-column-tables`, `x64-column-tables`, and `x128-column-tables` to
+  `32-column-tables`, `64-column-tables`, and `128-column-tables`. The leading
+  `x` was due to a bug in crates.io discovered while publishing 1.2.0. The bug
+  has since been fixed.
+
+## [1.2.0] - 2018-04-06
+
+### Added
+
+* Added `SqlLiteral::bind()`.
+  This is intended to be used for binding values to small SQL fragments.
+  Use `sql_query` if you are writing full queries.
 
 * Added support for `INSERT INTO table (...) SELECT ...` queries. Tables, select
   select statements, and boxed select statements can now be used just like any
@@ -42,6 +150,12 @@ for Rust libraries in [RFC #1105](https://github.com/rust-lang/rfcs/blob/master/
 
 [`DeleteStatement::into_boxed`]: http://docs.diesel.rs/diesel/query_builder/struct.DeleteStatement.html#method.into_boxed
 
+* Update statements can now be boxed. This is useful for conditionally modifying
+  the where clause of a update statement. See [`UpdateStatement::into_boxed`]
+  for details.
+
+[`UpdateStatement::into_boxed`]: http://docs.diesel.rs/diesel/query_builder/struct.UpdateStatement.html#method.into_boxed
+
 * Added `order_by` as an alias for `order`.
 
 * Added `then_order_by`, which appends to an `ORDER BY` clause rather than
@@ -55,11 +169,22 @@ for Rust libraries in [RFC #1105](https://github.com/rust-lang/rfcs/blob/master/
 * Queries that treat a subselect as a single value (e.g. `foo = (subselect)`)
   are now supported by calling [`.single_value()`].
 
+* `#[derive(Insertable)]` implements now `Insertable` also on the struct itself,
+  not only on references to the struct
+
 [`.single_value()`]: http://docs.diesel.rs/diesel/query_dsl/trait.QueryDsl.html#method.single_value
 
 * `ConnectionError` now implements `PartialEq`.
 
 * Columns generated by `table!` now implement `Default`
+
+* `#[derive(AsChangeset)]` now implements `AsChangeset` on the struct itself,
+  and not only on a reference to the struct
+
+* Added support for deserializing `Numeric` into `BigDecimal` on SQLite. SQLite
+  has no arbitrary precision type, so the result will still have floating point
+  rounding issues. This is primarily to support things like `avg(int_col)`,
+  which we define as returning `Numeric`
 
 ### Changed
 
@@ -101,6 +226,10 @@ for Rust libraries in [RFC #1105](https://github.com/rust-lang/rfcs/blob/master/
 ### Jokes
 
 * Diesel is now powered by the blockchain because it's 2018.
+
+## [1.1.2] - 2018-04-05
+
+* No changes
 
 ## [1.1.1] - 2018-01-16
 
@@ -1384,3 +1513,8 @@ for Rust libraries in [RFC #1105](https://github.com/rust-lang/rfcs/blob/master/
 [1.0.0]: https://github.com/diesel-rs/diesel/compare/v0.99.1...v1.0.0
 [1.1.0]: https://github.com/diesel-rs/diesel/compare/v1.0.0...v1.1.0
 [1.1.1]: https://github.com/diesel-rs/diesel/compare/v1.1.0...v1.1.1
+[1.1.2]: https://github.com/diesel-rs/diesel/compare/v1.1.1...v1.1.2
+[1.2.0]: https://github.com/diesel-rs/diesel/compare/v1.1.2...v1.2.0
+[1.2.1]: https://github.com/diesel-rs/diesel/compare/v1.2.0...v1.2.1
+[1.2.2]: https://github.com/diesel-rs/diesel/compare/v1.2.1...v1.2.2
+[1.3.0]: https://github.com/diesel-rs/diesel/compare/v1.2.2...v1.3.0

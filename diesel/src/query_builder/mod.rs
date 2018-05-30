@@ -18,7 +18,7 @@ pub mod functions;
 #[doc(hidden)]
 pub mod nodes;
 mod distinct_clause;
-pub(crate) mod for_update_clause;
+pub(crate) mod locking_clause;
 mod group_by_clause;
 mod limit_clause;
 mod offset_clause;
@@ -43,7 +43,8 @@ pub use self::query_id::QueryId;
 pub use self::select_statement::{BoxedSelectStatement, SelectStatement};
 pub use self::sql_query::SqlQuery;
 #[doc(inline)]
-pub use self::update_statement::{AsChangeset, IntoUpdateTarget, UpdateStatement, UpdateTarget};
+pub use self::update_statement::{AsChangeset, BoxedUpdateStatement, IntoUpdateTarget,
+                                 UpdateStatement, UpdateTarget};
 #[cfg(feature = "with-deprecated")]
 #[allow(deprecated)]
 pub use self::update_statement::IncompleteUpdateStatement;

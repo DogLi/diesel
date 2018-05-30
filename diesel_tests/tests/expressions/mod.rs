@@ -1,7 +1,11 @@
+extern crate bigdecimal;
+
 mod date_and_time;
 mod ops;
 
-use schema::{connection, DropTable, NewUser, TestBackend};
+use self::bigdecimal::BigDecimal;
+use schema::{connection, connection_with_sean_and_tess_in_users_table, DropTable, NewUser,
+             TestBackend};
 use schema::users::dsl::*;
 use diesel::*;
 use diesel::backend::Backend;
@@ -212,7 +216,7 @@ fn test_min() {
     assert_eq!(Ok(None::<i32>), source.first(&connection));
 }
 
-sql_function!(coalesce, coalesce_t, (x: sql_types::Nullable<sql_types::VarChar>, y: sql_types::VarChar) -> sql_types::VarChar);
+sql_function!(fn coalesce(x: sql_types::Nullable<sql_types::VarChar>, y: sql_types::VarChar) -> sql_types::VarChar);
 
 #[test]
 fn function_with_multiple_arguments() {
@@ -328,6 +332,14 @@ fn test_avg() {
 }
 
 #[test]
+fn test_avg_integer() {
+    let conn = connection_with_sean_and_tess_in_users_table();
+    let avg_id = users.select(avg(id)).get_result(&conn);
+    let expected = "1.5".parse::<BigDecimal>().unwrap();
+    assert_eq!(Ok(Some(expected)), avg_id);
+}
+
+#[test]
 fn test_avg_for_nullable() {
     use self::nullable_doubles::columns::*;
     use self::nullable_doubles::table as numbers;
@@ -424,7 +436,7 @@ fn test_arrays_a() {
 #[cfg(feature = "postgres")]
 fn test_arrays_b() {
     use diesel::sql_types::{Array, Int4};
-    sql_function!(unnest, unnest_t, (a: Array<Int4>) -> Int4);
+    sql_function!(fn unnest(a: Array<Int4>) -> Int4);
 
     use self::numbers::columns::*;
     use self::numbers::table as numbers;

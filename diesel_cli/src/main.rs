@@ -17,8 +17,17 @@ extern crate diesel;
 extern crate dotenv;
 extern crate infer_schema_internals;
 extern crate migrations_internals;
+#[macro_use]
+extern crate serde;
+extern crate tempfile;
+extern crate toml;
 #[cfg(feature = "url")]
 extern crate url;
+
+mod config;
+
+#[cfg(feature = "barrel-migrations")]
+extern crate barrel;
 
 mod database_error;
 #[macro_use]
@@ -32,10 +41,12 @@ use chrono::*;
 use clap::{ArgMatches, Shell};
 use migrations_internals::{self as migrations, MigrationConnection};
 use std::any::Any;
+use std::error::Error;
 use std::io::stdout;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+use self::config::Config;
 use self::database_error::{DatabaseError, DatabaseResult};
 use migrations_internals::TIMESTAMP_FORMAT;
 
@@ -46,16 +57,16 @@ fn main() {
     let matches = cli::build_cli().get_matches();
 
     match matches.subcommand() {
-        ("migration", Some(matches)) => run_migration_command(matches),
+        ("migration", Some(matches)) => run_migration_command(matches).unwrap_or_else(handle_error),
         ("setup", Some(matches)) => run_setup_command(matches),
         ("database", Some(matches)) => run_database_command(matches),
         ("bash-completion", Some(matches)) => generate_bash_completion_command(matches),
-        ("print-schema", Some(matches)) => run_infer_schema(matches),
+        ("print-schema", Some(matches)) => run_infer_schema(matches).unwrap_or_else(handle_error),
         _ => unreachable!("The cli parser should prevent reaching here"),
     }
 }
 
-fn run_migration_command(matches: &ArgMatches) {
+fn run_migration_command(matches: &ArgMatches) -> Result<(), Box<Error>> {
     match matches.subcommand() {
         ("run", Some(_)) => {
             let database_url = database::database_url(matches);
@@ -63,7 +74,8 @@ fn run_migration_command(matches: &ArgMatches) {
             call_with_conn!(
                 database_url,
                 migrations::run_pending_migrations_in_directory(&dir, &mut stdout())
-            ).unwrap_or_else(handle_error);
+            )?;
+            regenerate_schema_if_file_specified(matches)?;
         }
         ("revert", Some(_)) => {
             let database_url = database::database_url(matches);
@@ -71,19 +83,20 @@ fn run_migration_command(matches: &ArgMatches) {
             call_with_conn!(
                 database_url,
                 migrations::revert_latest_migration_in_directory(&dir)
-            ).unwrap_or_else(handle_error);
+            )?;
+            regenerate_schema_if_file_specified(matches)?;
         }
         ("redo", Some(_)) => {
             let database_url = database::database_url(matches);
             let dir = migrations_dir(matches);
             call_with_conn!(database_url, redo_latest_migration(&dir));
+            regenerate_schema_if_file_specified(matches)?;
         }
         ("list", Some(_)) => {
             let database_url = database::database_url(matches);
             let dir = migrations_dir(matches);
             let mut migrations =
-                call_with_conn!(database_url, migrations::mark_migrations_in_directory(&dir))
-                    .unwrap_or_else(handle_error);
+                call_with_conn!(database_url, migrations::mark_migrations_in_directory(&dir))?;
 
             migrations.sort_by_key(|&(ref m, _)| m.version().to_string());
 
@@ -101,40 +114,52 @@ fn run_migration_command(matches: &ArgMatches) {
         }
         ("pending", Some(_)) => {
             let database_url = database::database_url(matches);
-            let result = call_with_conn!(database_url, migrations::any_pending_migrations);
-            println!("{:?}", result.unwrap());
+            let result = call_with_conn!(database_url, migrations::any_pending_migrations)?;
+            println!("{:?}", result);
         }
         ("generate", Some(args)) => {
-            use std::io::Write;
-
             let migration_name = args.value_of("MIGRATION_NAME").unwrap();
             let version = migration_version(args);
             let versioned_name = format!("{}_{}", version, migration_name);
             let migration_dir = migrations_dir(matches).join(versioned_name);
             fs::create_dir(&migration_dir).unwrap();
 
-            let migration_dir_relative =
-                convert_absolute_path_to_relative(&migration_dir, &env::current_dir().unwrap());
-
-            let up_path = migration_dir.join("up.sql");
-            println!(
-                "Creating {}",
-                migration_dir_relative.join("up.sql").display()
-            );
-            let mut up = fs::File::create(up_path).unwrap();
-            up.write_all(b"-- Your SQL goes here").unwrap();
-
-            let down_path = migration_dir.join("down.sql");
-            println!(
-                "Creating {}",
-                migration_dir_relative.join("down.sql").display()
-            );
-            let mut down = fs::File::create(down_path).unwrap();
-            down.write_all(b"-- This file should undo anything in `up.sql`")
-                .unwrap();
+            match args.value_of("MIGRATION_FORMAT") {
+                #[cfg(feature = "barrel-migrations")]
+                Some("barrel") => ::barrel::integrations::diesel::generate_initial(&migration_dir),
+                Some("sql") => generate_sql_migration(&migration_dir),
+                Some(x) => return Err(format!("Unrecognized migration format `{}`", x).into()),
+                None => unreachable!("MIGRATION_FORMAT has a default value"),
+            }
         }
         _ => unreachable!("The cli parser should prevent reaching here"),
-    }
+    };
+
+    Ok(())
+}
+
+fn generate_sql_migration(path: &PathBuf) {
+    use std::io::Write;
+
+    let migration_dir_relative =
+        convert_absolute_path_to_relative(path, &env::current_dir().unwrap());
+
+    let up_path = path.join("up.sql");
+    println!(
+        "Creating {}",
+        migration_dir_relative.join("up.sql").display()
+    );
+    let mut up = fs::File::create(up_path).unwrap();
+    up.write_all(b"-- Your SQL goes here").unwrap();
+
+    let down_path = path.join("down.sql");
+    println!(
+        "Creating {}",
+        migration_dir_relative.join("down.sql").display()
+    );
+    let mut down = fs::File::create(down_path).unwrap();
+    down.write_all(b"-- This file should undo anything in `up.sql`")
+        .unwrap();
 }
 
 use std::fmt::Display;
@@ -165,6 +190,7 @@ fn migrations_dir(matches: &ArgMatches) -> PathBuf {
 
 fn run_setup_command(matches: &ArgMatches) {
     let migrations_dir = create_migrations_dir(matches).unwrap_or_else(handle_error);
+    create_config_file(matches).unwrap_or_else(handle_error);
 
     database::setup_database(matches, &migrations_dir).unwrap_or_else(handle_error);
 }
@@ -185,6 +211,17 @@ fn create_migrations_dir(matches: &ArgMatches) -> DatabaseResult<PathBuf> {
     }
 
     Ok(dir.to_owned())
+}
+
+fn create_config_file(matches: &ArgMatches) -> DatabaseResult<()> {
+    use std::io::Write;
+    let path = Config::file_path(matches);
+    if !path.exists() {
+        let mut file = fs::File::create(path)?;
+        file.write_all(include_bytes!("default_files/diesel.toml"))?;
+    }
+
+    Ok(())
 }
 
 fn run_database_command(matches: &ArgMatches) {
@@ -292,18 +329,22 @@ fn convert_absolute_path_to_relative(target_path: &Path, mut current_path: &Path
     result.join(target_path.strip_prefix(current_path).unwrap())
 }
 
-fn run_infer_schema(matches: &ArgMatches) {
+fn run_infer_schema(matches: &ArgMatches) -> Result<(), Box<Error>> {
     use infer_schema_internals::TableName;
     use print_schema::*;
 
     let database_url = database::database_url(matches);
-    let schema_name = matches.value_of("schema");
+    let mut config = Config::read(matches)?.print_schema;
+
+    if let Some(schema_name) = matches.value_of("schema") {
+        config.schema = Some(String::from(schema_name))
+    }
 
     let filter = matches
         .values_of("table-name")
         .unwrap_or_default()
         .map(|table_name| {
-            if let Some(schema) = schema_name {
+            if let Some(schema) = config.schema_name() {
                 TableName::new(table_name, schema)
             } else {
                 table_name.parse().unwrap()
@@ -311,20 +352,49 @@ fn run_infer_schema(matches: &ArgMatches) {
         })
         .collect();
 
-    let filter = if matches.is_present("whitelist") {
-        Filtering::Whitelist(filter)
-    } else if matches.is_present("blacklist") {
-        Filtering::Blacklist(filter)
-    } else {
-        Filtering::None
-    };
+    if matches.is_present("whitelist") {
+        eprintln!("The `whitelist` option has been deprecated and renamed to `only-tables`.");
+    }
 
-    let _ = run_print_schema(
-        &database_url,
-        schema_name,
-        &filter,
-        matches.is_present("with-docs"),
-    ).map_err(handle_error::<_, ()>);
+    if matches.is_present("blacklist") {
+        eprintln!("The `blacklist` option has been deprecated and renamed to `except-tables`.");
+    }
+
+    if matches.is_present("only-tables") || matches.is_present("whitelist") {
+        config.filter = Filtering::OnlyTables(filter)
+    } else if matches.is_present("except-tables") || matches.is_present("blacklist") {
+        config.filter = Filtering::ExceptTables(filter)
+    }
+
+    if matches.is_present("with-docs") {
+        config.with_docs = true;
+    }
+
+    if let Some(path) = matches.value_of("patch-file") {
+        config.patch_file = Some(PathBuf::from(path));
+    }
+
+    if let Some(types) = matches.values_of("import-types") {
+        let types = types.map(String::from).collect();
+        config.import_types = Some(types);
+    }
+
+    run_print_schema(&database_url, &config)?;
+    Ok(())
+}
+
+fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), Box<Error>> {
+    let config = Config::read(matches)?;
+    if let Some(ref path) = config.print_schema.file {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let database_url = database::database_url(matches);
+        let mut file = fs::File::create(path)?;
+        print_schema::output_schema(&database_url, &config.print_schema, file, path)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

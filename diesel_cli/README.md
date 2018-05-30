@@ -22,6 +22,13 @@ cargo install diesel_cli --no-default-features --features "postgres sqlite mysql
 [sqlite]: http://www.sqlitetutorial.net/download-install-sqlite/
 [mysql]: https://dev.mysql.com/doc/refman/5.7/en/installing.html
 
+If you are using a system without an easy way to install sqlite (for example Windows),
+you can use a bundled version instead:
+
+```shell
+cargo install diesel_cli --no-default-features --features "sqlite-bundled"
+```
+
 Getting Started
 ---------------
 
@@ -86,7 +93,7 @@ migrations if it created the internal table.
 
 #### `database reset`
 Drops the database specified in your DATABASE_URL if it can, and then runs
-`database database setup`.
+`diesel database setup`.
 
 ## `diesel migration`
 #### `migration generate`

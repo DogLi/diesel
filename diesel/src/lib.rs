@@ -99,6 +99,15 @@
 #![cfg_attr(feature = "huge-tables",
             deprecated(since = "1.2.0",
                        note = "The huge-tables feature has been renamed to 64-column-tables"))]
+#![cfg_attr(feature = "x32-column-tables",
+            deprecated(since = "1.2.1",
+                       note = "The x32-column-tables feature has been reanmed to 32-column-tables. The x was a workaround for a bug in crates.io that has since been resolved"))]
+#![cfg_attr(feature = "x64-column-tables",
+            deprecated(since = "1.2.1",
+                       note = "The x64-column-tables feature has been reanmed to 64-column-tables. The x was a workaround for a bug in crates.io that has since been resolved"))]
+#![cfg_attr(feature = "x128-column-tables",
+            deprecated(since = "1.2.1",
+                       note = "The x128-column-tables feature has been reanmed to 128-column-tables. The x was a workaround for a bug in crates.io that has since been resolved"))]
 #![cfg_attr(feature = "unstable", feature(specialization, try_from))]
 // Built-in Lints
 #![deny(warnings, missing_debug_implementations, missing_copy_implementations, missing_docs)]
@@ -108,13 +117,15 @@
 #![cfg_attr(feature = "clippy", plugin(clippy(conf_file = "../../clippy.toml")))]
 #![cfg_attr(feature = "clippy",
             allow(option_map_unwrap_or_else, option_map_unwrap_or, match_same_arms,
-                  type_complexity))]
+                  type_complexity, redundant_field_names))]
 #![cfg_attr(feature = "clippy",
             warn(option_unwrap_used, result_unwrap_used, print_stdout,
                  wrong_pub_self_convention, mut_mut, non_ascii_literal, similar_names,
                  unicode_not_nfc, enum_glob_use, if_not_else, items_after_statements,
                  used_underscore_binding))]
 #![cfg_attr(all(test, feature = "clippy"), allow(option_unwrap_used, result_unwrap_used))]
+
+#![recursion_limit = "256"]
 
 #[cfg(feature = "postgres")]
 #[macro_use]
@@ -159,6 +170,7 @@ pub mod serialize;
 pub mod sql_types;
 pub mod types;
 pub mod row;
+pub mod migration;
 
 #[cfg(feature = "mysql")]
 pub mod mysql;
@@ -179,6 +191,10 @@ pub mod dsl {
 
     #[doc(inline)]
     pub use expression::dsl::*;
+
+    #[doc(inline)]
+    pub use query_builder::functions::{delete, insert_into, insert_or_ignore_into, replace_into,
+                                       select, sql_query, update};
 }
 
 pub mod helper_types {
@@ -192,6 +208,7 @@ pub mod helper_types {
     //! DslName<OtherTypes>>::Output`. So the return type of
     //! `users.filter(first_name.eq("John")).order(last_name.asc()).limit(10)` would
     //! be `Limit<Order<FindBy<users, first_name, &str>, Asc<last_name>>>`
+    use super::query_builder::locking_clause as lock;
     use super::query_dsl::*;
     use super::query_dsl::methods::*;
     use super::query_source::joins;
@@ -209,7 +226,28 @@ pub mod helper_types {
     pub type FindBy<Source, Column, Value> = Filter<Source, Eq<Column, Value>>;
 
     /// Represents the return type of `.for_update()`
+    #[cfg(feature = "with-deprecated")]
+    #[allow(deprecated)]
     pub type ForUpdate<Source> = <Source as ForUpdateDsl>::Output;
+
+    /// Represents the return type of `.for_update()`
+    #[cfg(not(feature = "with-deprecated"))]
+    pub type ForUpdate<Source> = <Source as LockingDsl<lock::ForUpdate>>::Output;
+
+    /// Represents the return type of `.for_no_key_update()`
+    pub type ForNoKeyUpdate<Source> = <Source as LockingDsl<lock::ForNoKeyUpdate>>::Output;
+
+    /// Represents the return type of `.for_share()`
+    pub type ForShare<Source> = <Source as LockingDsl<lock::ForShare>>::Output;
+
+    /// Represents the return type of `.for_key_share()`
+    pub type ForKeyShare<Source> = <Source as LockingDsl<lock::ForKeyShare>>::Output;
+
+    /// Represents the return type of `.skip_locked()`
+    pub type SkipLocked<Source> = <Source as ModifyLockDsl<lock::SkipLocked>>::Output;
+
+    /// Represents the return type of `.no_wait()`
+    pub type NoWait<Source> = <Source as ModifyLockDsl<lock::NoWait>>::Output;
 
     /// Represents the return type of `.find(pk)`
     pub type Find<Source, PK> = <Source as FindDsl<PK>>::Output;

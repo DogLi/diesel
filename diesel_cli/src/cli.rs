@@ -51,6 +51,14 @@ pub fn build_cli() -> App<'static, 'static> {
                              for most use cases.",
                         )
                         .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("MIGRATION_FORMAT")
+                        .long("format")
+                        .possible_values(&["sql", "barrel"])
+                        .default_value("sql")
+                        .takes_value(true)
+                        .help("The format of the migration to be generated."),
                 ),
         )
         .setting(AppSettings::SubcommandRequiredElseHelp);
@@ -100,27 +108,70 @@ pub fn build_cli() -> App<'static, 'static> {
                 .index(1)
                 .takes_value(true)
                 .multiple(true)
-                .help("Table names to filter (default whitelist if not empty)"),
+                .help("Table names to filter (default only-tables if not empty)"),
+        )
+        .arg(
+            Arg::with_name("only-tables")
+                .short("o")
+                .long("only-tables")
+                .help("Only include tables from table-name")
+                .conflicts_with("except-tables")
+                .conflicts_with("blacklist"),
         )
         .arg(
             Arg::with_name("whitelist")
                 .short("w")
                 .long("whitelist")
-                .help("Use table list as whitelist")
-                .conflicts_with("blacklist"),
+                .hidden(true)
+                .conflicts_with("blacklist")
+                .conflicts_with("except-tables"),
+        )
+        .arg(
+            Arg::with_name("except-tables")
+                .short("e")
+                .long("except-tables")
+                .help("Exclude tables from table-name")
+                .conflicts_with("only-tables")
+                .conflicts_with("whitelist"),
         )
         .arg(
             Arg::with_name("blacklist")
                 .short("b")
                 .long("blacklist")
-                .help("Use table list as blacklist")
-                .conflicts_with("whitelist"),
+                .hidden(true)
+                .conflicts_with("whitelist")
+                .conflicts_with("only-tables"),
         )
         .arg(
             Arg::with_name("with-docs")
                 .long("with-docs")
                 .help("Render documentation comments for tables and columns"),
+        )
+        .arg(
+            Arg::with_name("patch-file")
+                .long("patch-file")
+                .takes_value(true)
+                .help("A unified diff file to be applied to the final schema"),
+        )
+        .arg(
+            Arg::with_name("import-types")
+                .long("import-types")
+                .takes_value(true)
+                .multiple(true)
+                .number_of_values(1)
+                .help("A list of types to import for every table, separated by commas"),
         );
+
+    let config_arg = Arg::with_name("CONFIG_FILE")
+        .long("config-file")
+        .help(
+            "The location of the configuration file to use. Falls back to the \
+             `DIESEL_CONFIG_FILE` environment variable if unspecified. Defaults \
+             to `diesel.toml` in your project root. See \
+             diesel.rs/guides/configuring-diesel-cli for documentation on this file.",
+        )
+        .global(true)
+        .takes_value(true);
 
     App::new("diesel")
         .version(env!("CARGO_PKG_VERSION"))
@@ -129,6 +180,7 @@ pub fn build_cli() -> App<'static, 'static> {
             "You can also run `diesel SUBCOMMAND -h` to get more information about that subcommand.",
         )
         .arg(database_arg)
+        .arg(config_arg)
         .subcommand(migration_subcommand)
         .subcommand(setup_subcommand)
         .subcommand(database_subcommand)

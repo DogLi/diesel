@@ -4,27 +4,27 @@ use std::ffi::{CStr, CString};
 use std::io::{stderr, Write};
 use std::os::raw as libc;
 use std::ptr;
-use std::rc::Rc;
 
 use sqlite::SqliteType;
 use result::*;
 use result::Error::DatabaseError;
 use super::raw::RawConnection;
 use super::sqlite_value::SqliteRow;
+use super::serialized_value::SerializedValue;
+use util::NonNull;
 
 pub struct Statement {
-    raw_connection: Rc<RawConnection>,
-    inner_statement: *mut ffi::sqlite3_stmt,
+    inner_statement: NonNull<ffi::sqlite3_stmt>,
     bind_index: libc::c_int,
 }
 
 impl Statement {
-    pub fn prepare(raw_connection: &Rc<RawConnection>, sql: &str) -> QueryResult<Self> {
+    pub fn prepare(raw_connection: &RawConnection, sql: &str) -> QueryResult<Self> {
         let mut stmt = ptr::null_mut();
         let mut unused_portion = ptr::null();
         let prepare_result = unsafe {
             ffi::sqlite3_prepare_v2(
-                raw_connection.internal_connection,
+                raw_connection.internal_connection.as_ptr(),
                 try!(CString::new(sql)).as_ptr(),
                 sql.len() as libc::c_int,
                 &mut stmt,
@@ -32,10 +32,11 @@ impl Statement {
             )
         };
 
-        ensure_sqlite_ok(prepare_result, raw_connection).map(|_| Statement {
-            raw_connection: Rc::clone(raw_connection),
-            inner_statement: stmt,
-            bind_index: 0,
+        ensure_sqlite_ok(prepare_result, raw_connection.internal_connection.as_ptr()).map(|_| {
+            Statement {
+                inner_statement: unsafe { NonNull::new_unchecked(stmt) },
+                bind_index: 0,
+            }
         })
     }
 
@@ -45,79 +46,23 @@ impl Statement {
 
     pub fn bind(&mut self, tpe: SqliteType, value: Option<Vec<u8>>) -> QueryResult<()> {
         self.bind_index += 1;
-        // This unsafe block assumes the following invariants:
-        //
-        // - `self.inner_statement` points to valid memory
-        // - If `tpe` is anything other than `Binary` or `Text`, the appropriate
-        //   number of bytes were written to `value` for an integer of the
-        //   corresponding size.
-        let result = unsafe {
-            match (tpe, value) {
-                (_, None) => ffi::sqlite3_bind_null(self.inner_statement, self.bind_index),
-                (SqliteType::Binary, Some(bytes)) => ffi::sqlite3_bind_blob(
-                    self.inner_statement,
-                    self.bind_index,
-                    bytes.as_ptr() as *const libc::c_void,
-                    bytes.len() as libc::c_int,
-                    ffi::SQLITE_TRANSIENT(),
-                ),
-                (SqliteType::Text, Some(bytes)) => ffi::sqlite3_bind_text(
-                    self.inner_statement,
-                    self.bind_index,
-                    bytes.as_ptr() as *const libc::c_char,
-                    bytes.len() as libc::c_int,
-                    ffi::SQLITE_TRANSIENT(),
-                ),
-                (SqliteType::Float, Some(bytes)) => {
-                    let value = *(bytes.as_ptr() as *const f32);
-                    ffi::sqlite3_bind_double(
-                        self.inner_statement,
-                        self.bind_index,
-                        libc::c_double::from(value),
-                    )
-                }
-                (SqliteType::Double, Some(bytes)) => {
-                    let value = *(bytes.as_ptr() as *const f64);
-                    ffi::sqlite3_bind_double(
-                        self.inner_statement,
-                        self.bind_index,
-                        value as libc::c_double,
-                    )
-                }
-                (SqliteType::SmallInt, Some(bytes)) => {
-                    let value = *(bytes.as_ptr() as *const i16);
-                    ffi::sqlite3_bind_int(
-                        self.inner_statement,
-                        self.bind_index,
-                        libc::c_int::from(value),
-                    )
-                }
-                (SqliteType::Integer, Some(bytes)) => {
-                    let value = *(bytes.as_ptr() as *const i32);
-                    ffi::sqlite3_bind_int(
-                        self.inner_statement,
-                        self.bind_index,
-                        value as libc::c_int,
-                    )
-                }
-                (SqliteType::Long, Some(bytes)) => {
-                    let value = *(bytes.as_ptr() as *const i64);
-                    ffi::sqlite3_bind_int64(self.inner_statement, self.bind_index, value)
-                }
-            }
+        let value = SerializedValue {
+            ty: tpe,
+            data: value,
         };
+        let result = value.bind_to(self.inner_statement, self.bind_index);
 
-        ensure_sqlite_ok(result, &self.raw_connection)
+        ensure_sqlite_ok(result, self.raw_connection())
     }
 
     fn num_fields(&self) -> usize {
-        unsafe { ffi::sqlite3_column_count(self.inner_statement) as usize }
+        unsafe { ffi::sqlite3_column_count(self.inner_statement.as_ptr()) as usize }
     }
 
     /// The lifetime of the returned CStr is shorter than self. This function
     /// should be tied to a lifetime that ends before the next call to `reset`
     unsafe fn field_name<'a>(&self, idx: usize) -> Option<&'a CStr> {
-        let ptr = ffi::sqlite3_column_name(self.inner_statement, idx as libc::c_int);
+        let ptr = ffi::sqlite3_column_name(self.inner_statement.as_ptr(), idx as libc::c_int);
         if ptr.is_null() {
             None
         } else {
@@ -126,20 +71,24 @@ impl Statement {
     }
 
     fn step(&mut self) -> QueryResult<Option<SqliteRow>> {
-        match unsafe { ffi::sqlite3_step(self.inner_statement) } {
+        match unsafe { ffi::sqlite3_step(self.inner_statement.as_ptr()) } {
             ffi::SQLITE_DONE => Ok(None),
             ffi::SQLITE_ROW => Ok(Some(SqliteRow::new(self.inner_statement))),
-            _ => Err(last_error(&self.raw_connection)),
+            _ => Err(last_error(self.raw_connection())),
         }
     }
 
     fn reset(&mut self) {
         self.bind_index = 0;
-        unsafe { ffi::sqlite3_reset(self.inner_statement) };
+        unsafe { ffi::sqlite3_reset(self.inner_statement.as_ptr()) };
+    }
+
+    fn raw_connection(&self) -> *mut ffi::sqlite3 {
+        unsafe { ffi::sqlite3_db_handle(self.inner_statement.as_ptr()) }
     }
 }
 
-fn ensure_sqlite_ok(code: libc::c_int, raw_connection: &RawConnection) -> QueryResult<()> {
+fn ensure_sqlite_ok(code: libc::c_int, raw_connection: *mut ffi::sqlite3) -> QueryResult<()> {
     if code == ffi::SQLITE_OK {
         Ok(())
     } else {
@@ -147,10 +96,10 @@ fn ensure_sqlite_ok(code: libc::c_int, raw_connection: &RawConnection) -> QueryR
     }
 }
 
-fn last_error(raw_connection: &RawConnection) -> Error {
-    let error_message = raw_connection.last_error_message();
+fn last_error(raw_connection: *mut ffi::sqlite3) -> Error {
+    let error_message = last_error_message(raw_connection);
     let error_information = Box::new(error_message);
-    let error_kind = match raw_connection.last_error_code() {
+    let error_kind = match last_error_code(raw_connection) {
         ffi::SQLITE_CONSTRAINT_UNIQUE | ffi::SQLITE_CONSTRAINT_PRIMARYKEY => {
             DatabaseErrorKind::UniqueViolation
         }
@@ -160,12 +109,21 @@ fn last_error(raw_connection: &RawConnection) -> Error {
     DatabaseError(error_kind, error_information)
 }
 
+fn last_error_message(conn: *mut ffi::sqlite3) -> String {
+    let c_str = unsafe { CStr::from_ptr(ffi::sqlite3_errmsg(conn)) };
+    c_str.to_string_lossy().into_owned()
+}
+
+fn last_error_code(conn: *mut ffi::sqlite3) -> libc::c_int {
+    unsafe { ffi::sqlite3_extended_errcode(conn) }
+}
+
 impl Drop for Statement {
     fn drop(&mut self) {
         use std::thread::panicking;
 
-        let finalize_result = unsafe { ffi::sqlite3_finalize(self.inner_statement) };
-        if let Err(e) = ensure_sqlite_ok(finalize_result, &self.raw_connection) {
+        let finalize_result = unsafe { ffi::sqlite3_finalize(self.inner_statement.as_ptr()) };
+        if let Err(e) = ensure_sqlite_ok(finalize_result, self.raw_connection()) {
             if panicking() {
                 write!(
                     stderr(),

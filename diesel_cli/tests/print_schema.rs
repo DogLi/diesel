@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use support::{database, project};
 
@@ -15,17 +15,17 @@ fn run_infer_schema() {
 }
 
 #[test]
-fn run_infer_schema_whitelist() {
+fn run_infer_schema_include() {
     test_print_schema(
-        "print_schema_whitelist",
+        "print_schema_only_tables",
         vec!["--with-docs", "-w", "users1"],
     );
 }
 
 #[test]
-fn run_infer_schema_blacklist() {
+fn run_infer_schema_exclude() {
     test_print_schema(
-        "print_schema_blacklist",
+        "print_schema_except_tables",
         vec!["--with-docs", "-b", "users1"],
     );
 }
@@ -69,6 +69,27 @@ fn print_schema_column_renaming() {
     test_print_schema("print_schema_column_renaming", vec!["--with-docs"]);
 }
 
+#[test]
+#[cfg(feature = "mysql")]
+fn print_schema_unsigned() {
+    test_print_schema("print_schema_unsigned", vec!["--with-docs"]);
+}
+
+#[test]
+fn print_schema_patch_file() {
+    let path_to_patch_file = backend_file_path("print_schema_patch_file", "schema.patch");
+    let path = path_to_patch_file.display().to_string();
+    test_print_schema("print_schema_patch_file", vec!["--patch-file", &path]);
+}
+
+#[test]
+fn print_schema_custom_types() {
+    test_print_schema(
+        "print_schema_custom_types",
+        vec!["--import-types", "foo::*", "--import-types", "bar::*"],
+    );
+}
+
 #[cfg(feature = "sqlite")]
 const BACKEND: &str = "sqlite";
 #[cfg(feature = "postgres")]
@@ -76,30 +97,66 @@ const BACKEND: &str = "postgres";
 #[cfg(feature = "mysql")]
 const BACKEND: &str = "mysql";
 
+fn backend_file_path(test_name: &str, file: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("print_schema")
+        .join(test_name)
+        .join(BACKEND)
+        .join(file)
+}
+
 fn test_print_schema(test_name: &str, args: Vec<&str>) {
     let test_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("print_schema")
-        .join(test_name)
-        .join(BACKEND);
+        .join(test_name);
     let p = project(test_name).build();
     let db = database(&p.database_url());
 
     p.command("setup").run();
 
-    let schema = read_file(&test_path.join("schema.sql"));
+    let schema = read_file(&backend_file_path(test_name, "schema.sql"));
     db.execute(&schema);
 
     let result = p.command("print-schema").args(args).run();
 
     assert!(result.is_success(), "Result was unsuccessful {:?}", result);
-    let expected = read_file(&test_path.join("expected.rs"));
+    let expected = read_file(&backend_file_path(test_name, "expected.rs"));
+
+    assert_diff!(&expected, result.stdout(), "\n", 0);
+
+    test_print_schema_config(test_name, &test_path, schema, expected);
+}
+
+fn test_print_schema_config(test_name: &str, test_path: &Path, schema: String, expected: String) {
+    let config = read_file(&test_path.join("diesel.toml"));
+    let mut p = project(&format!("{}_config", test_name)).file("diesel.toml", &config);
+
+    let patch_file = backend_file_path(test_name, "schema.patch");
+    if patch_file.exists() {
+        let patch_contents = read_file(&patch_file);
+        p = p.file("schema.patch", &patch_contents);
+    }
+
+    let p = p.build();
+
+    p.command("setup").run();
+    p.create_migration("12345_create_schema", &schema, "");
+
+    let result = p.command("migration").arg("run").run();
+    assert!(result.is_success(), "Result was unsuccessful {:?}", result);
+
+    let schema = p.file_contents("src/schema.rs");
+    assert_diff!(&expected, &schema, "\n", 0);
+
+    let result = p.command("print-schema").run();
+    assert!(result.is_success(), "Result was unsuccessful {:?}", result);
 
     assert_diff!(&expected, result.stdout(), "\n", 0);
 }
 
 fn read_file(path: &Path) -> String {
-    println!("{}", path.display());
     let mut file = File::open(path).expect(&format!("Could not open {}", path.display()));
     let mut string = String::new();
     file.read_to_string(&mut string).unwrap();

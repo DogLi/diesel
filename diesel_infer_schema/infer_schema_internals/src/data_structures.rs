@@ -21,6 +21,7 @@ pub struct ColumnType {
     pub rust_name: String,
     pub is_array: bool,
     pub is_nullable: bool,
+    pub is_unsigned: bool,
 }
 
 use std::fmt;
@@ -33,7 +34,13 @@ impl fmt::Display for ColumnType {
         if self.is_array {
             write!(out, "Array<")?;
         }
+        if self.is_unsigned {
+            write!(out, "Unsigned<")?;
+        }
         write!(out, "{}", self.rust_name)?;
+        if self.is_unsigned {
+            write!(out, ">")?;
+        }
         if self.is_array {
             write!(out, ">")?;
         }
@@ -61,7 +68,7 @@ impl ColumnInformation {
         ColumnInformation {
             column_name: column_name.into(),
             type_name: type_name.into(),
-            nullable: nullable,
+            nullable,
         }
     }
 }

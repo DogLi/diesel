@@ -1,11 +1,26 @@
+use config;
+
 use infer_schema_internals::*;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter, Write};
+use std::fs::File;
+use std::io::{self, stdout, Write as IoWrite};
+use std::path::Path;
+use std::process::Command;
+use tempfile::NamedTempFile;
 
 pub enum Filtering {
-    Whitelist(Vec<TableName>),
-    Blacklist(Vec<TableName>),
+    OnlyTables(Vec<TableName>),
+    ExceptTables(Vec<TableName>),
     None,
+}
+
+impl Default for Filtering {
+    fn default() -> Self {
+        Filtering::None
+    }
 }
 
 impl Filtering {
@@ -13,8 +28,8 @@ impl Filtering {
         use self::Filtering::*;
 
         match *self {
-            Whitelist(ref names) => !names.contains(name),
-            Blacklist(ref names) => names.contains(name),
+            OnlyTables(ref names) => !names.contains(name),
+            ExceptTables(ref names) => names.contains(name),
             None => false,
         }
     }
@@ -22,15 +37,30 @@ impl Filtering {
 
 pub fn run_print_schema(
     database_url: &str,
-    schema_name: Option<&str>,
-    filtering: &Filtering,
-    include_docs: bool,
+    config: &config::PrintSchema,
 ) -> Result<(), Box<Error>> {
-    let table_names = load_table_names(database_url, schema_name)?
+    let tempfile = NamedTempFile::new()?;
+    let file = tempfile.reopen()?;
+    output_schema(database_url, config, file, tempfile.path())?;
+
+    // patch "replaces" our tempfile, meaning the old handle
+    // does not include the patched output.
+    let mut file = File::open(tempfile.path())?;
+    io::copy(&mut file, &mut stdout())?;
+    Ok(())
+}
+
+pub fn output_schema(
+    database_url: &str,
+    config: &config::PrintSchema,
+    mut out: File,
+    out_path: &Path,
+) -> Result<(), Box<Error>> {
+    let table_names = load_table_names(database_url, config.schema_name())?
         .into_iter()
-        .filter(|t| !filtering.should_ignore_table(t))
+        .filter(|t| !config.filter.should_ignore_table(t))
         .collect::<Vec<_>>();
-    let foreign_keys = load_foreign_key_constraints(database_url, schema_name)?;
+    let foreign_keys = load_foreign_key_constraints(database_url, config.schema_name())?;
     let foreign_keys =
         remove_unsafe_foreign_keys_for_codegen(database_url, &foreign_keys, &table_names);
     let table_data = table_names
@@ -40,18 +70,35 @@ pub fn run_print_schema(
     let definitions = TableDefinitions {
         tables: table_data,
         fk_constraints: foreign_keys,
-        include_docs,
+        include_docs: config.with_docs,
+        import_types: config.import_types(),
     };
 
-    if let Some(schema_name) = schema_name {
-        print!("{}", ModuleDefinition(schema_name, definitions));
+    if let Some(schema_name) = config.schema_name() {
+        write!(out, "{}", ModuleDefinition(schema_name, definitions))?;
     } else {
-        print!("{}", definitions);
+        write!(out, "{}", definitions)?;
     }
+
+    if let Some(ref patch_file) = config.patch_file {
+        let output = Command::new("patch")
+            .arg(out_path)
+            .arg(patch_file)
+            .output()?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "Failed to apply schema patch. stdout: {} stderr: {}",
+                stdout, stderr,
+            ).into());
+        }
+    }
+
     Ok(())
 }
 
-struct ModuleDefinition<'a>(&'a str, TableDefinitions);
+struct ModuleDefinition<'a>(&'a str, TableDefinitions<'a>);
 
 impl<'a> Display for ModuleDefinition<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -65,20 +112,21 @@ impl<'a> Display for ModuleDefinition<'a> {
     }
 }
 
-struct TableDefinitions {
+struct TableDefinitions<'a> {
     tables: Vec<TableData>,
     fk_constraints: Vec<ForeignKeyConstraint>,
     include_docs: bool,
+    import_types: Option<&'a [String]>,
 }
 
-impl Display for TableDefinitions {
+impl<'a> Display for TableDefinitions<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let mut is_first = true;
         for table in &self.tables {
             if is_first {
                 is_first = false;
             } else {
-                write!(f, "\n")?;
+                writeln!(f)?;
             }
             writeln!(
                 f,
@@ -86,12 +134,13 @@ impl Display for TableDefinitions {
                 TableDefinition {
                     table,
                     include_docs: self.include_docs,
+                    import_types: self.import_types,
                 }
             )?;
         }
 
         if !self.fk_constraints.is_empty() {
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
 
         for foreign_key in &self.fk_constraints {
@@ -102,7 +151,7 @@ impl Display for TableDefinitions {
             write!(f, "\nallow_tables_to_appear_in_same_query!(")?;
             {
                 let mut out = PadAdapter::new(f);
-                write!(out, "\n")?;
+                writeln!(out)?;
                 for table in &self.tables {
                     writeln!(out, "{},", table.name.name)?;
                 }
@@ -116,6 +165,7 @@ impl Display for TableDefinitions {
 
 struct TableDefinition<'a> {
     table: &'a TableData,
+    import_types: Option<&'a [String]>,
     include_docs: bool,
 }
 
@@ -124,7 +174,14 @@ impl<'a> Display for TableDefinition<'a> {
         write!(f, "table! {{")?;
         {
             let mut out = PadAdapter::new(f);
-            write!(out, "\n")?;
+            writeln!(out)?;
+
+            if let Some(types) = self.import_types {
+                for import in types {
+                    writeln!(out, "use {};", import)?;
+                }
+                writeln!(out)?;
+            }
 
             if self.include_docs {
                 for d in self.table.docs.lines() {
@@ -204,7 +261,7 @@ struct PadAdapter<'a, 'b: 'a> {
 impl<'a, 'b: 'a> PadAdapter<'a, 'b> {
     fn new(fmt: &'a mut Formatter<'b>) -> PadAdapter<'a, 'b> {
         PadAdapter {
-            fmt: fmt,
+            fmt,
             on_newline: false,
         }
     }
@@ -236,5 +293,60 @@ impl<'a, 'b: 'a> Write for PadAdapter<'a, 'b> {
         }
 
         Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for Filtering {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FilteringVisitor;
+
+        impl<'de> Visitor<'de> for FilteringVisitor {
+            type Value = Filtering;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("either only_tables or except_tables")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut only_tables = None;
+                let mut except_tables = None;
+                while let Some((key, value)) = map.next_entry()? {
+                    match key {
+                        "only_tables" => {
+                            if only_tables.is_some() {
+                                return Err(de::Error::duplicate_field("only_tables"));
+                            }
+                            only_tables = Some(value);
+                        }
+                        "except_tables" => {
+                            if except_tables.is_some() {
+                                return Err(de::Error::duplicate_field("except_tables"));
+                            }
+                            except_tables = Some(value);
+                        }
+                        _ => {
+                            return Err(de::Error::unknown_field(
+                                key,
+                                &["only_tables", "except_tables"],
+                            ))
+                        }
+                    }
+                }
+                match (only_tables, except_tables) {
+                    (Some(_), Some(_)) => Err(de::Error::duplicate_field("except_tables")),
+                    (Some(w), None) => Ok(Filtering::OnlyTables(w)),
+                    (None, Some(b)) => Ok(Filtering::ExceptTables(b)),
+                    (None, None) => Ok(Filtering::None),
+                }
+            }
+        }
+
+        deserializer.deserialize_map(FilteringVisitor)
     }
 }

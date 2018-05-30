@@ -24,11 +24,13 @@ mod diagnostic_shim;
 mod field;
 mod meta;
 mod model;
+mod resolved_at_shim;
 mod util;
 
 mod as_changeset;
 mod as_expression;
 mod associations;
+mod diesel_numeric_ops;
 mod from_sql_row;
 mod identifiable;
 mod insertable;
@@ -53,6 +55,11 @@ pub fn derive_as_expression(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Associations, attributes(belongs_to, column_name, table_name))]
 pub fn derive_associations(input: TokenStream) -> TokenStream {
     expand_derive(input, associations::derive)
+}
+
+#[proc_macro_derive(DieselNumericOps)]
+pub fn derive_diesel_numeric_ops(input: TokenStream) -> TokenStream {
+    expand_derive(input, diesel_numeric_ops::derive)
 }
 
 #[proc_macro_derive(FromSqlRow, attributes(diesel))]

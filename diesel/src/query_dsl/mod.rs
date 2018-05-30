@@ -18,6 +18,7 @@ use connection::Connection;
 use expression::Expression;
 use expression::count::CountStar;
 use helper_types::*;
+use query_builder::locking_clause as lock;
 use query_source::{joins, Table};
 use result::{first_or_not_found, QueryResult};
 
@@ -62,6 +63,9 @@ pub mod methods {
     pub use super::filter_dsl::*;
     pub use super::limit_dsl::LimitDsl;
     pub use super::load_dsl::{ExecuteDsl, LoadQuery};
+    pub use super::locking_dsl::{LockingDsl, ModifyLockDsl};
+    #[cfg(feature = "with-deprecated")]
+    #[allow(deprecated)]
     pub use super::locking_dsl::ForUpdateDsl;
     pub use super::offset_dsl::OffsetDsl;
     pub use super::order_dsl::{OrderDsl, ThenOrderDsl};
@@ -796,11 +800,138 @@ pub trait QueryDsl: Sized {
     /// // Executes `SELECT * FROM users FOR UPDATE`
     /// users.for_update().load(&connection)
     /// ```
+    #[cfg(feature = "with-deprecated")]
+    #[allow(deprecated)]
     fn for_update(self) -> ForUpdate<Self>
     where
         Self: methods::ForUpdateDsl,
     {
         methods::ForUpdateDsl::for_update(self)
+    }
+
+    /// Adds `FOR UPDATE` to the end of the select statement.
+    ///
+    /// This method is only available for MySQL and PostgreSQL. SQLite does not
+    /// provide any form of row locking.
+    ///
+    /// Additionally, `.for_update` cannot be used on queries with a distinct
+    /// clause, group by clause, having clause, or any unions. Queries with
+    /// a `FOR UPDATE` clause cannot be boxed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Executes `SELECT * FROM users FOR UPDATE`
+    /// users.for_update().load(&connection)
+    /// ```
+    #[cfg(not(feature = "with-deprecated"))]
+    fn for_update(self) -> ForUpdate<Self>
+    where
+        Self: methods::LockingDsl<lock::ForUpdate>,
+    {
+        methods::LockingDsl::with_lock(self, lock::ForUpdate)
+    }
+
+    /// Adds `FOR NO KEY UPDATE` to the end of the select statement.
+    ///
+    /// This method is only available for PostgreSQL. SQLite does not
+    /// provide any form of row locking, and MySQL does not support anything
+    /// finer than row-level locking.
+    ///
+    /// Additionally, `.for_no_key_update` cannot be used on queries with a distinct
+    /// clause, group by clause, having clause, or any unions. Queries with
+    /// a `FOR NO KEY UPDATE` clause cannot be boxed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Executes `SELECT * FROM users FOR NO KEY UPDATE`
+    /// users.for_no_key_update().load(&connection)
+    /// ```
+    fn for_no_key_update(self) -> ForNoKeyUpdate<Self>
+    where
+        Self: methods::LockingDsl<lock::ForNoKeyUpdate>,
+    {
+        methods::LockingDsl::with_lock(self, lock::ForNoKeyUpdate)
+    }
+
+    /// Adds `FOR SHARE` to the end of the select statement.
+    ///
+    /// This method is only available for MySQL and PostgreSQL. SQLite does not
+    /// provide any form of row locking.
+    ///
+    /// Additionally, `.for_share` cannot be used on queries with a distinct
+    /// clause, group by clause, having clause, or any unions. Queries with
+    /// a `FOR SHARE` clause cannot be boxed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Executes `SELECT * FROM users FOR SHARE`
+    /// users.for_share().load(&connection)
+    /// ```
+    fn for_share(self) -> ForShare<Self>
+    where
+        Self: methods::LockingDsl<lock::ForShare>,
+    {
+        methods::LockingDsl::with_lock(self, lock::ForShare)
+    }
+
+    /// Adds `FOR KEY SHARE` to the end of the select statement.
+    ///
+    /// This method is only available for PostgreSQL. SQLite does not
+    /// provide any form of row locking, and MySQL does not support anything
+    /// finer than row-level locking.
+    ///
+    /// Additionally, `.for_key_share` cannot be used on queries with a distinct
+    /// clause, group by clause, having clause, or any unions. Queries with
+    /// a `FOR KEY SHARE` clause cannot be boxed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Executes `SELECT * FROM users FOR KEY SHARE`
+    /// users.for_key_share().load(&connection)
+    /// ```
+    fn for_key_share(self) -> ForKeyShare<Self>
+    where
+        Self: methods::LockingDsl<lock::ForKeyShare>,
+    {
+        methods::LockingDsl::with_lock(self, lock::ForKeyShare)
+    }
+
+    /// Adds `SKIP LOCKED` to the end of a `FOR UPDATE` clause.
+    ///
+    /// This modifier is only supported in PostgreSQL 9.5+ and MySQL 8+.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Executes `SELECT * FROM users FOR UPDATE SKIP LOCKED`
+    /// users.for_update().skip_locked().load(&connection)
+    /// ```
+    fn skip_locked(self) -> SkipLocked<Self>
+    where
+        Self: methods::ModifyLockDsl<lock::SkipLocked>,
+    {
+        methods::ModifyLockDsl::modify_lock(self, lock::SkipLocked)
+    }
+
+    /// Adds `NOWAIT` to the end of a `FOR UPDATE` clause.
+    ///
+    /// This modifier is only supported in PostgreSQL 9.5+ and MySQL 8+.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Executes `SELECT * FROM users FOR UPDATE NOWAIT`
+    /// users.for_update().no_wait().load(&connection)
+    /// ```
+    fn no_wait(self) -> NoWait<Self>
+    where
+        Self: methods::ModifyLockDsl<lock::NoWait>,
+    {
+        methods::ModifyLockDsl::modify_lock(self, lock::NoWait)
     }
 
     /// Boxes the pieces of a query into a single type.
@@ -926,7 +1057,7 @@ pub trait RunQueryDsl<Conn>: Sized {
     /// [`update`](../fn.update.html) and [`delete`](../fn.delete.html) where the number of
     /// affected rows is often enough information.
     ///
-    /// When asking the database to return data from a query, [`load`](fn.load.html) should
+    /// When asking the database to return data from a query, [`load`](#method.load) should
     /// probably be used instead.
     ///
     /// # Example

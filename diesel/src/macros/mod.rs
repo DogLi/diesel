@@ -95,10 +95,12 @@ macro_rules! __diesel_column {
 /// By default this allows a maximum of 32 columns per table.
 /// You can increase this limit to 64 by enabling the `64-column-tables` feature.
 /// You can increase it to 128 by enabling the `128-column-tables` feature.
+/// (The leading `x` is due to a bug in crates.io and will be removed in a
+/// future release)
 /// You can decrease it to 16 columns,
 /// which improves compilation time,
 /// by disabling the default features of Diesel.
-/// Note that enabling 64-column tables or larger will substantially increase
+/// Note that enabling 64 column tables or larger will substantially increase
 /// the compile time of Diesel.
 ///
 /// Example usage
@@ -117,7 +119,7 @@ macro_rules! __diesel_column {
 /// ```
 ///
 /// You may also specify a primary key if it's called something other than `id`.
-/// Tables with no primary key, or composite primary containing more than 3
+/// Tables with no primary key, or a composite primary key containing more than 5
 /// columns are not supported.
 ///
 /// ```rust
@@ -154,8 +156,7 @@ macro_rules! __diesel_column {
 /// ```
 ///
 /// If you are using types that aren't from Diesel's core types, you can specify
-/// which types to import. Note that the path given has to be an absolute path
-/// relative to the crate root. You cannot use `self` or `super`.
+/// which types to import.
 ///
 /// ```
 /// #[macro_use] extern crate diesel;
@@ -178,7 +179,6 @@ macro_rules! __diesel_column {
 /// }
 /// # fn main() {}
 /// ```
-///
 ///
 /// If you want to add documentation to the generated code you can use the
 /// following syntax:
@@ -1021,17 +1021,17 @@ macro_rules! __diesel_table_query_source_impl {
 ///
 /// specifies the relation of the tables and the ON clause in the following way:
 ///
-/// `parent_table -> child_table (foreign_key)`
+/// `child_table -> parent_table (foreign_key)`
 ///
 /// * `parent_table` is the Table with the Primary key.
 ///
-/// * `child_table` is the Table with the Foreighn key.
+/// * `child_table` is the Table with the Foreign key.
 ///
 /// So given the Table decaration from [Associations docs](http://docs.diesel.rs/diesel/associations/index.html)
 ///
 /// * The parent table would be `User`
 /// * The child table would be `Post`
-/// * and the Foreighn key would be `Post.user_id`
+/// * and the Foreign key would be `Post.user_id`
 ///
 /// For joins that do not explicitly use on clauses via [`JoinOnDsl`](http://docs.diesel.rs/diesel/prelude/trait.JoinOnDsl.html)
 /// the following on clause is generated implicitly:
@@ -1167,6 +1167,8 @@ mod query_id;
 mod static_cond;
 #[macro_use]
 mod ops;
+#[macro_use]
+mod tuples;
 
 #[cfg(test)]
 mod tests {

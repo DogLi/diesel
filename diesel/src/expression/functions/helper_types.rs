@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-use dsl::AsExprOf;
+use dsl::{AsExprOf, SqlTypeOf};
 use expression::grouped::Grouped;
 use expression::operators;
 use sql_types::Bool;
@@ -14,13 +14,13 @@ pub type not<Expr> = operators::Not<Grouped<AsExprOf<Expr, Bool>>>;
 pub type Not<Expr> = not<Expr>;
 
 /// The return type of [`max(expr)`](../dsl/fn.max.html)
-pub type max<Expr> = super::aggregate_ordering::Max<Expr>;
+pub type max<Expr> = super::aggregate_ordering::max::HelperType<SqlTypeOf<Expr>, Expr>;
 
 /// The return type of [`min(expr)`](../dsl/fn.min.html)
-pub type min<Expr> = super::aggregate_ordering::Min<Expr>;
+pub type min<Expr> = super::aggregate_ordering::min::HelperType<SqlTypeOf<Expr>, Expr>;
 
 /// The return type of [`sum(expr)`](../dsl/fn.sum.html)
-pub type sum<Expr> = super::aggregate_folding::Sum<Expr>;
+pub type sum<Expr> = super::aggregate_folding::sum::HelperType<SqlTypeOf<Expr>, Expr>;
 
 /// The return type of [`avg(expr)`](../dsl/fn.avg.html)
-pub type avg<Expr> = super::aggregate_folding::Avg<Expr>;
+pub type avg<Expr> = super::aggregate_folding::avg::HelperType<SqlTypeOf<Expr>, Expr>;
