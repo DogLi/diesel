@@ -12,6 +12,7 @@ pub struct ConnectionOptions {
     password: Option<CString>,
     database: Option<CString>,
     port: Option<u16>,
+    timeout: Option<u32>,
 }
 
 impl ConnectionOptions {
@@ -44,12 +45,16 @@ impl ConnectionOptions {
             Some(segment) => Some(try!(CString::new(segment.as_bytes()))),
         };
 
+        let query = url.query_pairs();
+        let timeout = query.filter(|q| q.0 == "timeout").next().and_then(|q| q.1.parse::<u32>().ok());
+
         Ok(ConnectionOptions {
             host: host,
             user: user,
             password: password,
             database: database,
             port: url.port(),
+            timeout: timeout,
         })
     }
 
@@ -72,6 +77,11 @@ impl ConnectionOptions {
     pub fn port(&self) -> Option<u16> {
         self.port
     }
+
+    pub fn timeout(&self) -> Option<u32> {
+        self.timeout
+    }
+
 }
 
 fn decode_into_cstring(s: &str) -> ConnectionResult<CString> {

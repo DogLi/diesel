@@ -13,7 +13,7 @@ use util::NonNull;
 pub struct RawConnection(NonNull<ffi::MYSQL>);
 
 impl RawConnection {
-    pub fn new() -> Self {
+    pub fn new(timeout: u32) -> Self {
         perform_thread_unsafe_library_initialization();
         let raw_connection = unsafe { ffi::mysql_init(ptr::null_mut()) };
         // We're trusting https://dev.mysql.com/doc/refman/5.7/en/mysql-init.html
@@ -36,6 +36,53 @@ impl RawConnection {
              recognized as an option by MySQL. This should never \
              happen."
         );
+
+        //https://dev.mysql.com/doc/refman/5.6/en/c-api-auto-reconnect.html
+        //explicitly turn off reconnect
+        let reconnect = &0i32 as *const libc::c_int as *const libc::c_void;
+        let reconnect_result = unsafe {
+            ffi::mysql_options(
+                result.0.as_ptr(),
+                ffi::mysql_option::MYSQL_OPT_RECONNECT,
+                reconnect, )
+        };
+        assert_eq!(0, reconnect_result, "MYSQL_OPT_RECONNECT was not \
+            recognized as an option by MySQL. This should never \
+            happen.");
+
+        let timeout = &timeout as *const libc::c_uint as *const libc::c_void;
+        let connect_timeout_result = unsafe {
+            ffi::mysql_options(
+                result.0.as_ptr(),
+                ffi::mysql_option::MYSQL_OPT_CONNECT_TIMEOUT,
+                timeout,
+            )
+        };
+        assert_eq!(0, connect_timeout_result, "MYSQL_OPT_CONNECT_TIMEOUT was not \
+                   recognized as an option by MySQL. This should never \
+                   happen.");
+
+        let read_timeout_result = unsafe {
+            ffi::mysql_options(
+                result.0.as_ptr(),
+                ffi::mysql_option::MYSQL_OPT_READ_TIMEOUT,
+                timeout,
+            )
+        };
+        assert_eq!(0, read_timeout_result, "MYSQL_OPT_READ_TIMEOUT was not \
+            recognized as an option by MySQL. This should never \
+            happen.");
+
+        let write_timeout_result = unsafe {
+            ffi::mysql_options(
+                result.0.as_ptr(),
+                ffi::mysql_option::MYSQL_OPT_WRITE_TIMEOUT,
+                timeout,
+            )
+        };
+        assert_eq!(0, write_timeout_result, "MYSQL_OPT_WRITE_TIMEOUT was not \
+            recognized as an option by MySQL. This should never \
+            happen.");
 
         result
     }
